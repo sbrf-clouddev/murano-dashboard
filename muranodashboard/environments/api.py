@@ -13,8 +13,9 @@
 #    under the License.
 
 from django.utils.translation import ugettext_lazy as _
-
+import iso8601
 from oslo_log import log as logging
+import pytz
 import six
 
 from muranoclient.common import exceptions as exc
@@ -26,6 +27,12 @@ from muranodashboard.environments import topology
 
 
 LOG = logging.getLogger(__name__)
+
+
+def adjust_datestr(request, datestr):
+    tz = pytz.timezone(request.session.get('django_timezone'))
+    dt = iso8601.parse_date(datestr).astimezone(tz)
+    return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 
 def get_status_messages_for_service(request, service_id, environment_id):
@@ -41,7 +48,7 @@ def get_status_messages_for_service(request, service_id, environment_id):
                 environment_id, deployment.id, service_id)
 
             for report in reports:
-                result += report.created.replace('T', ' ') + ' - ' + \
+                result += adjust_datestr(request, report.created) + ' - ' + \
                     report.text + '\n'
     return result
 
@@ -416,7 +423,7 @@ def get_deployment_start(request, environment_id, deployment_id):
     LOG.debug('Get deployment start time')
     for deployment in deployments:
         if deployment.id == deployment_id:
-            return deployment.started.replace('T', ' ')
+            return adjust_datestr(request, deployment.started)
     return None
 
 

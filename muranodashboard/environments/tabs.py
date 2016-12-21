@@ -151,7 +151,7 @@ class EnvLogsTab(tabs.Tab):
     def get_context_data(self, request):
         reports = self.tab_group.kwargs['logs']
         for report in reports:
-            report.created = report.created.replace('T', ' ')
+            report.created = api.adjust_datestr(request, report.created)
         return {"reports": reports}
 
 
