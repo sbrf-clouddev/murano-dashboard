@@ -41,6 +41,7 @@ from muranodashboard.api import packages as pkg_api
 from muranodashboard.common import net
 from muranodashboard.environments import api as env_api
 
+MAX_INST = 4095
 
 LOG = logging.getLogger(__name__)
 
@@ -210,6 +211,10 @@ class CustomPropertiesField(forms.Field):
         if validators_js:
             self.js_validation = json.dumps(validators_js)
 
+        if kwargs.pop('readonly', False):
+            kwargs.update({'widget': forms.TextInput(
+                attrs={'readonly': 'readonly'})})
+
         super(CustomPropertiesField, self).__init__(*args, **kwargs)
 
     def widget_attrs(self, widget):
@@ -246,6 +251,122 @@ class CustomPropertiesField(forms.Field):
 
 class CharField(forms.CharField, CustomPropertiesField):
     pass
+
+
+class OpenStackUsernameField(CharField):
+    def __init__(self, *args, **kwargs):
+        super(OpenStackUsernameField, self).__init__(*args, **kwargs)
+
+    @with_request
+    def update(self, request, **kwargs):
+        if request.user.is_authenticated():
+            self.initial = request.user.username
+
+
+class HostNameField(CharField):
+    def __init__(self,  *args, **kwargs):
+        super(HostNameField, self).__init__(*args, **kwargs)
+
+    @with_request
+    def update(self, request, **kwargs):
+        app_id = request.resolver_match.kwargs['app_id']
+        environment_id = request.resolver_match.kwargs['environment_id']
+        fqn = pkg_api.get_app_fqn(request, app_id)
+        new_name = self._generate_name(fqn, request, environment_id)
+        if self.initial is not None:
+            if '#' in self.initial:
+                new_name += "-" + self.initial
+        self.initial = new_name
+
+    def _generate_name(self, fqn, request, environment_id):
+        names = []
+        nums = []
+        project_name = request.user.project_name
+        project_id = request.user.project_id
+        region_name = request.session.get('services_region')
+        LOG.debug("request session name %s", region_name)
+        app_data = request.session.setdefault('apps_data', {})
+        LOG.debug("request session %s", app_data)
+        region_name = region_name.replace(" ", "-")
+        project_name = project_name.replace(" ", "-")
+        region = 'dev'
+        if region_name:
+            if region_name.isalnum():
+                region = 'vc' + region_name[:1]
+                if region_name == 'RegionOne':
+                    region = 'dev'
+                    LOG.debug("default region name used")
+            else:
+                LOG.warning("not alphanumeric region name %s",
+                            region_name)
+        fqn = str(fqn)
+        app = fqn.rsplit('.', 1)[-1]
+        app = app[:3]
+        project_name = project_name.split('-')[0]
+        project_name = project_name[:8]
+        if project_name.isalnum():
+            patt_project = re.compile(r'^\D\d+')
+            if patt_project.search(project_name) is None:
+                # LOG.warning("{} does not match ^\D\d+ pattern ". \
+                # format(project_name))
+                LOG.warning("%s does not match ^\D\d+ pattern ",
+                            project_name)
+                # TODO(rbogorodskiy): log formatting
+                project_name = project_id[:5]
+        else:
+            project_name = project_id[:5]
+        patt_instance = "{}-{}-{}".format(region, project_name, app)
+        patt_instance = patt_instance.lower()
+        LOG.debug("looking for instances like %s", patt_instance)
+        servers = nova.novaclient(request).servers.list()
+        for server in servers:
+            sname = str(server.name)
+            names.append(sname)
+        env = env_api.environment_get(request, environment_id)
+
+        def _finditem(obj, key):
+            if key in obj:
+                return obj[key]
+            for k, v in six.iteritems(obj):
+                if isinstance(v, dict):
+                    item = _finditem(v, key)
+                    if item is not None:
+                        return item
+                if isinstance(v, list):
+                    for w in v:
+                        if isinstance(w, dict):
+                            item = _finditem(w, key)
+                            if item is not None:
+                                return item
+
+        if env.services:
+            for service in env.services:
+                inst = _finditem(service, 'instance')
+                if isinstance(inst, dict):
+                    sname = str(inst.get('name'))
+                    if sname:
+                        names.append(sname)
+        LOG.debug("looking for instances like %s", patt_instance)
+        LOG.debug("found %d names", len(names))
+        for sname in names:
+            num_part = sname.split(patt_instance)
+            if len(num_part) > 1:
+                d = num_part[1]
+                d = d.split('-')[0]
+                try:
+                    d = int(d, 16)
+                    nums.append(d)
+                    LOG.debug("found number %d", d)
+                except ValueError as e:
+                    LOG.warning("not a number in pattern %s", sname)
+                    LOG.warning(repr(e))
+        LOG.debug("found %d names ", len(nums))
+        rlist = list(set(range(1, MAX_INST)) - set(nums))
+        instnumber = rlist[0]
+        LOG.debug("assigning number %d", instnumber)
+        instnumber_str = format(instnumber, '03x')
+        res = "{}{}".format(patt_instance, instnumber_str)
+        return res
 
 
 class PasswordField(CharField):
