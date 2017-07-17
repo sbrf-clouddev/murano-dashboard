@@ -199,6 +199,38 @@
                 $flavorSpecs.append($('#quota_bars').html());
                 horizon.Quota.initWithFlavors(flavors);
               }
+
+              // Update quota titles according to the selected flavor
+              var updateQuotaTitles = function() {
+                var appendVal = function(elem, value) {
+                  var origTitle = elem.data('orig-title');
+                  if (!origTitle) {
+                    elem.data('orig-title', origTitle = elem.text());
+                  }
+                  elem.text(value + ' + ' + origTitle);
+                };
+                var selFlavor = $.grep(flavors, function(flavor) {
+                  return flavor.id === $flavorElem.val();
+                })[0];
+                $flavorSpecs.find('.quota_title span').each(function(idx) {
+                  switch (idx) {
+                    // instance count title case
+                    case 0:
+                      appendVal($(this), 1);
+                      break;
+                    // VCPU count title case
+                    case 1:
+                      appendVal($(this), selFlavor.vcpus);
+                      break;
+                    // RAM amount title case
+                    case 2:
+                      appendVal($(this), selFlavor.ram);
+                      break;
+                  }
+                });
+              };
+              updateQuotaTitles();
+              $flavorElem.on('change', updateQuotaTitles);
             }
           });
           // show full name on text overflow
